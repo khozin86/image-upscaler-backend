@@ -1,0 +1,8 @@
+Flask
+flask-cors
+Pillow
+numpy
+torch
+realesrgan
+basicsr
+gunicorn

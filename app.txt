@@ -1,0 +1,76 @@
+from flask import Flask, request, send_file, jsonify 
+from flask_cors import CORS
+import io
+import zipfile
+from datetime import datetime
+from PIL import Image
+import torch
+import numpy as np  # Tambahkan ini
+from realesrgan import RealESRGANer
+from basicsr.archs.rrdbnet_arch import RRDBNet
+
+app = Flask(__name__)
+CORS(app)
+
+# Setup model Real-ESRGAN
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
+upsampler = RealESRGANer(
+    scale=4,
+    model_path='weights/RealESRGAN_x4plus.pth',
+    model=model,
+    tile=0,
+    tile_pad=10,
+    pre_pad=0,
+    half=False,
+    device=device
+)
+
+@app.route('/')
+def home():
+    return 'AI Image Upscaler with Real-ESRGAN is running!'
+
+@app.route('/api/upscale', methods=['POST'])
+def upscale_images():
+    files = request.files.getlist('images')
+
+    if not files:
+        return jsonify({'error': 'No files uploaded'}), 400
+
+    if len(files) == 1:
+        file = files[0]
+        img = Image.open(file.stream).convert('RGB')
+        img_np = np.array(img)
+
+        output, _ = upsampler.enhance(img_np, outscale=4)
+
+        upscaled_img = Image.fromarray(output)
+        img_bytes = io.BytesIO()
+        upscaled_img.save(img_bytes, format='PNG')
+        img_bytes.seek(0)
+
+        filename = f"upscaled-{datetime.now().strftime('%Y%m%d%H%M%S')}.png"
+        return send_file(img_bytes, mimetype='image/png', as_attachment=True, download_name=filename)
+
+    # Multi-file -> return ZIP
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w') as zipf:
+        for idx, file in enumerate(files):
+            img = Image.open(file.stream).convert('RGB')
+            img_np = np.array(img)
+
+            output, _ = upsampler.enhance(img_np, outscale=4)
+
+            upscaled_img = Image.fromarray(output)
+            img_bytes = io.BytesIO()
+            upscaled_img.save(img_bytes, format='PNG')
+            img_bytes.seek(0)
+
+            filename = f"upscaled-{datetime.now().strftime('%Y%m%d%H%M%S')}-{idx+1}.png"
+            zipf.writestr(filename, img_bytes.read())
+
+    zip_buffer.seek(0)
+    return send_file(zip_buffer, mimetype='application/zip', as_attachment=True, download_name='upscaled-images.zip')
+
+if __name__ == '__main__':
+    app.run(debug=True)
